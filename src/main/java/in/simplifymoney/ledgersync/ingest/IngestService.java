@@ -53,10 +53,14 @@ public final class IngestService {
             byTransaction.computeIfAbsent(id, k -> new ArrayList<>()).add(t);
         }
 
+        List<NormalizedTxn> drafts = new ArrayList<>();
         for (List<ParsedTxn> evidence : byTransaction.values()) {
-            store.save(toTransaction(evidence));
+            drafts.add(toTransaction(evidence));
         }
-        return new Stats(messages.size(), byTransaction.size(), skipped);
+        for (NormalizedTxn t : Categories.apply(drafts)) {
+            store.save(t);
+        }
+        return new Stats(messages.size(), drafts.size(), skipped);
     }
 
     public static List<RawMessage> readCorpus(Path corpus) throws IOException {
