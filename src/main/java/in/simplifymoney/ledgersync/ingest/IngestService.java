@@ -1,4 +1,6 @@
 package in.simplifymoney.ledgersync.ingest;
+import in.simplifymoney.ledgersync.store.TxnId;
+import java.util.LinkedHashMap;
 
 import in.simplifymoney.ledgersync.json.Json;
 import in.simplifymoney.ledgersync.model.Category;
@@ -35,20 +37,26 @@ public final class IngestService {
         this.store = store;
     }
 
-    public Stats ingestFile(Path corpus) throws IOException {
+        public Stats ingestFile(Path corpus) throws IOException {
         List<RawMessage> messages = readCorpus(corpus);
-        int parsed = 0;
+        Map<String, List<ParsedTxn>> byTransaction = new LinkedHashMap<>();
         int skipped = 0;
+
         for (RawMessage m : messages) {
             Optional<ParsedTxn> p = parsers.parse(m);
             if (p.isEmpty()) {
                 skipped++;
                 continue;
             }
-            store.save(toTransaction(p.get()));
-            parsed++;
+            ParsedTxn t = p.get();
+            String id = TxnId.of(t.accountLast4(), t.occurredAt(), t.direction(), t.amount());
+            byTransaction.computeIfAbsent(id, k -> new ArrayList<>()).add(t);
         }
-        return new Stats(messages.size(), parsed, skipped);
+
+        for (List<ParsedTxn> evidence : byTransaction.values()) {
+            store.save(toTransaction(evidence));
+        }
+        return new Stats(messages.size(), byTransaction.size(), skipped);
     }
 
     public static List<RawMessage> readCorpus(Path corpus) throws IOException {
@@ -68,10 +76,16 @@ public final class IngestService {
         return out;
     }
 
-    private NormalizedTxn toTransaction(ParsedTxn p) {
-        Category c = p.direction() == Direction.DEBIT ? Category.SPEND : Category.INCOME;
-        return new NormalizedTxn(p.accountLast4(), p.occurredAt(), p.direction(),
-                p.amount(), c, p.merchant(), List.of(p.sourceMessageId()));
+    private NormalizedTxn toTransaction(List<ParsedTxn> evidence) {
+        ParsedTxn first = evidence.get(0);
+        List<String> ids = evidence.stream()
+                .map(ParsedTxn::sourceMessageId)
+                .distinct()
+                .sorted()
+                .toList();
+        Category c = first.direction() == Direction.DEBIT ? Category.SPEND : Category.INCOME;
+        return new NormalizedTxn(first.accountLast4(), first.occurredAt(), first.direction(),
+                first.amount(), c, first.merchant(), ids);
     }
 
     public record Stats(int messagesRead, int transactionsWritten, int messagesSkipped) {}
