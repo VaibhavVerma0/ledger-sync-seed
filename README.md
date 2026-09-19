@@ -1,197 +1,233 @@
-# ledger-sync
+# Ledger Sync — Vaibhav Verma
 
-Scaffolding for the Simplify Money **Software Engineering Intern (Backend, Java)** take-home.
+Turns raw bank SMS and email into a ledger the user can trust.
 
-Read this file completely before you write any code. Then read
-`fixtures/corpus-a.jsonl` — not all 500 lines, but enough of them that you stop
-being surprised.
-
-> **Do not open a pull request here.** Work in your own fork and submit by email.
-> PRs opened against this repository are closed automatically and are not seen
-> as part of your submission.
+**Status:** Tasks 2 and 3 complete. Task 4 complete: MongoDB document store,
+backfill, consistency checker, and the examined-vs-returned numbers at 100,000
+transactions. See `UNFINISHED.md` for what I did not get to and what I could not
+verify on my machine.
 
 ---
 
-## What this service is for
+## Running it in under five minutes
 
-Simplify Money tells a user where their money went. To do that, something has to
-read the bank SMS and bank emails sitting on their phone and turn them into a
-ledger the user can trust.
-
-This repository is that something, half-finished, with a live incident open
-against it.
-
----
-
-## What you are being asked to do, exactly
-
-**Input:** `fixtures/corpus-a.jsonl` — one JSON object per line, each a single
-SMS or email exactly as the phone uploaded it:
-
-```json
-{"message_id":"m-00004-9c11ae","channel":"sms","sender":"AD-HDFCBK-S",
- "received_at":"2026-07-04T07:19:00+05:30","device_id":"dev-3f1a90c47b21",
- "body":"Rs.5 debited from a/c **4821 on 04-07-26 at 07:19 to UPI/WATER CAN. Avl Bal: Rs.92,213.10. Not you? Call 18002586161"}
-```
-
-**Output:** three JSON files, written by `report <dir>`.
-
-### 1. `ledger.json` — one entry per real transaction
-
-```json
-{"transactions": [
-  {"account_last4":"4821","occurred_at":"2026-07-04T20:24:00+05:30",
-   "direction":"debit","amount":"2499.50","category":"SPEND",
-   "merchant":"AMAZON PAY","source_message_ids":["m-00087-1a2b3c","m-00089-77de01"]}
-]}
-```
-
-`occurred_at` is when the **bank says the transaction happened**, not when the
-message arrived. `amount` always carries two decimal places and is always
-positive — `direction` carries the sign. `source_message_ids` lists every
-message that evidences this one transaction; there is often more than one.
-
-### 2. `summary.json` — per-account totals
-
-```json
-{"accounts": {
-  "4821": {"spend":"87068.38","income":"101340.83",
-           "micro_count":52,"micro_total":"2357.51",
-           "transferred_out":"25000.00","transferred_in":"6000.00"}
-}}
-```
-
-### 3. `reconciliation.json` — anything your ledger cannot account for
-
-```json
-{"discrepancies": [
-  {"account_last4":"4821","occurred_at":"...","amount":"...","note":"..."}
-]}
-```
-
-We are not telling you how to find these, or whether there are any. Working out
-what "cannot account for" means here, and what in the data lets you check it, is
-part of the task.
-
----
-
-## The four categories
-
-Every transaction gets exactly one.
-
-| Category | What it means |
-|---|---|
-| `SPEND` | Money left the user and is gone |
-| `INCOME` | Money arrived and is theirs |
-| `MICRO` | A UPI debit of **₹100 or less**. Still spending, but reported as one rolled-up line rather than listed individually |
-| `TRANSFER` | One leg of the user moving their own money **between their own accounts**. Real — the money moved — but it is neither spending nor income, and counting it as either inflates both |
-
-`micro_total` is the sum of `MICRO`. `spend` is the sum of `SPEND` and does
-**not** include `MICRO` or `TRANSFER`. `income` likewise excludes `TRANSFER`.
-
----
-
-## Your checkpoint
-
-`fixtures/corpus-a-totals.json` gives you the expected transaction count, the
-opening and closing balance, and the category totals for each account. No
-row-level answers. Use it to check yourself.
-
-If your numbers do not match it, **say so and say why.** A submission whose
-numbers match because they were made to match is worse than one that does not
-match and explains itself. We can tell the difference, and we check.
-
----
-
-## Where the code is now
-
-```
-src/main/java/in/simplifymoney/ledgersync/
-  model/       RawMessage, NormalizedTxn, Category, Direction
-  json/        a small JSON reader/writer, so this builds with only a JDK
-  parse/       one parser per message format
-  ingest/      reads a corpus, saves what it finds
-  store/       the SQL ledger, and the document store you are going to add
-  report/      the three output documents
-  App.java     migrate | ingest | report
-  SelfCheck.java
-```
-
-Run it:
+Needs JDK 21 and MongoDB on `localhost:27017`.
 
 ```bash
-./verify.sh                      # compile + run the pipeline, no network needed
-./gradlew test                   # the test suite (needs network once, for JUnit)
-./gradlew run --args="migrate"
+docker compose up -d                              # starts MongoDB
+./verify.sh                                       # compile + run the pipeline, no network, no DB
+
+./gradlew test                                    # test suite
+./gradlew run --args="migrate"                    # schema only
 ./gradlew run --args="ingest fixtures/corpus-a.jsonl"
-./gradlew run --args="report submission/"
+./gradlew run --args="report submission/"         # writes the three JSON files
+
+./gradlew run --args="migrate legacy"             # loads V2 legacy production rows
+./gradlew docstore --args="backfill"              # SQL -> MongoDB
+./gradlew docstore --args="check"                 # prove the two stores agree
+./gradlew docstore --args="bench 100000"          # examined vs returned at 100k
 ```
 
-`./verify.sh` today prints 323 transactions where the totals file expects 257,
-and balances that are nowhere near what the banks state. That is the starting
-point, not a bug you have hit.
+`MONGO_URI` overrides the connection string; it defaults to
+`mongodb://localhost:27017`.
+
+**Two things the seed needed before any of this would run**, both documented in
+`DECISIONS.md`:
+
+- there was no Gradle wrapper, though the README instructs `./gradlew`. I
+  generated and committed one.
+- `V1__initial.sql` declares `id IDENTITY PRIMARY KEY`. H2 2.x removed the
+  `IDENTITY` data type and `build.gradle` pins 2.2.224, so `migrate` failed on a
+  clean checkout. Changed to `BIGINT GENERATED BY DEFAULT AS IDENTITY`. The CI
+  workflow runs only `verify.sh`, which never touches the database, so this was
+  invisible.
 
 ---
 
-## What is missing, in the order we would do it
+## Results against corpus-a
 
-1. **`EmailParser` is a stub.** Every email in the corpus is currently dropped.
-2. **`IciciSmsParser` reads one of the ICICI formats.** There is at least one
-   more in the corpus, falling straight through.
-3. **Nothing deduplicates.** `IngestService` saves one transaction per message.
-   One transaction is not one message.
-4. **Categories are decided from the direction alone.** No `MICRO`, no
-   `TRANSFER`.
-5. **`Reports.summary` adds up whatever it is given.** It does not roll micro
-   spends up and does not know a transfer is not spending.
-6. **`Reports.reconciliation` is not written.**
-7. **`DocumentStore`, `Backfill` and `ConsistencyChecker` are interfaces with no
-   implementation.** See below.
-8. **`incident/INC-2026-09-11.md` is open.** Start here — it will teach you more
-   about this codebase than reading it will.
+| | produced | expected |
+|---|---|---|
+| transactions | 256 | 257 |
+| account 4821 | 145 | 146 |
+| account 9075 | 91 | 91 |
+| account 3310 (card) | 20 | not in the totals file |
 
----
+`summary.json` matches `corpus-a-totals.json` on **17 of 18 figures**, to the
+paisa: both accounts' income, micro count, micro total, and both transfer
+directions, plus 9075's spend.
 
-## The document store
+**The eighteenth is short by exactly 7,500.00 and this is deliberate.** Walking
+the stated balance chain on account 4821 shows one break: between 11:53 and
+17:06 on 29 Jul 2026 the balance falls 7,575.00 while the only message in that
+window reports 75.00. A debit of 7,500.00 happened that no message in the corpus
+reports. It is the 146th transaction and the whole of the gap:
 
-The ledger is moving off SQL onto a document store. **DynamoDB preferred,
-MongoDB fine** — your choice, and say why. It must run from your
-`docker compose up`.
+```
+79,568.38  (spend evidenced by messages)
++ 7,500.00  (the unreported debit)
+= 87,068.38  (the fixture)
+```
 
-`DocumentStore` declares the only three queries this service makes:
+`NormalizedTxn` requires at least one source message id, so a transaction
+inferred from a balance gap cannot enter `ledger.json` without inventing
+evidence. It is reported in `reconciliation.json` instead. I would rather submit
+a number that does not match and explain it than make it match.
 
-1. one account's transactions for one month, newest first
-2. running totals per category for an account
-3. given a message id, which transaction did it produce
-
-Design your documents so the engine serves these directly. We are not going to
-tell you what a document should look like — that decision is the exercise.
-
-For each of the three, **report how many items the engine examined versus how
-many it returned, at 100,000 transactions.** DynamoDB gives you `ScannedCount`
-and `Count`; MongoDB gives you `totalDocsExamined` and `nReturned`. Put the six
-numbers in your README.
-
-Then:
-
-- **`Backfill`** moves what is already in SQL across. Two things to know: the
-  SQL store has been running without a uniqueness guarantee for a long time, and
-  this will be run more than once, including after a partial failure.
-- **`ConsistencyChecker`** proves the two stores agree and names precisely where
-  they do not. We will run yours against a document store we have deliberately
-  altered. It has to find what we changed. A checker that compares row counts
-  will not.
+The card account quotes `Avl Limit`, which in this corpus is a per-message
+snapshot rather than a running figure — it returns to the same value repeatedly
+— so it is excluded from the chain. Including it would have produced 19 false
+discrepancies.
 
 ---
 
-## Rules
+## How the pipeline works
 
-- `model/NormalizedTxn.java`, `model/Category.java` and
-  `src/test/.../NormalizedTxnContractTest.java` are **frozen**. Do not edit
-  them. Everything behind them is yours.
-- Java. Any framework, or none — say why in your decision log.
-- Real commit history. Not one squashed commit.
-- If something in here is wrong or unclear, **email us**. Guessing when you
-  could have asked is a worse signal than asking.
+```
+messages (jsonl)
+  -> parse      one parser per format; unknown formats are reported, never guessed
+  -> identify   a deterministic identity derived from the transaction itself
+  -> merge      several messages describing one transaction become one entry
+  -> categorise SPEND / INCOME / MICRO / TRANSFER, over the whole set
+  -> reconcile  walk the stated balance chain, report what it cannot account for
+  -> report     ledger.json, summary.json, reconciliation.json
+```
 
-`talent.acquisition@simplifymoney.in`
+### Identity, and why it is not the message id
+
+`RawMessage` says the message id identifies the upload, not the message. The
+corpus proves it: a batch received on 2026-08-15 re-uploads earlier SMS with
+fresh ids. Deduplicating on `message_id` would double roughly 190 messages.
+
+Identity is therefore `account | occurredAt.toInstant() | direction | amount`
+(`store/TxnId`). Two messages agreeing on those four describe one transaction,
+whether they arrived by SMS, by email, or twice by the same channel. 191 of the
+256 transactions cite more than one message; 54 merge an SMS with an email.
+
+The same identity delivers idempotency. `V3__txn_id.sql` adds a unique index on
+it and `save` is a `MERGE`, so re-ingesting the same corpus updates the same 256
+rows rather than adding 256 more, and unions the message ids rather than
+replacing them. Verified: two consecutive ingests both end at 256 rows.
+
+### Categories
+
+- **MICRO** — a UPI debit of 100.00 or less. Matched on the `UPI` token, not a
+  `UPI/` prefix: the corpus contains a 0.50 debit labelled `UPI MANDATE VERIFY`,
+  and a prefix match returns 44 micro on 9075 where 45 are expected.
+- **TRANSFER** — decided by pairing, not by wording. A transfer is invisible in a
+  single transaction; it is a debit on one tracked account and a matching credit
+  on another within ten minutes. The corpus punishes keyword matching directly: a
+  12,000.00 debit to `IMPS/P2A/RAHUL SHARMA` has no counter-leg and is spending,
+  and an 18,000.00 credit labelled `NEFT INWARD SELF` has no counter-leg and is
+  income. Categorisation therefore runs over the full set after ingest.
+- **SPEND / INCOME** — everything else, by direction.
+
+### What is not a transaction
+
+43 of the 522 messages are correctly skipped: OTPs, delivery and rider updates,
+loan adverts, balance enquiries, e-mandate notices announcing a *future* debit,
+and phishing SMS that quote an amount to create urgency. A parser that cannot
+read a message returns empty and the message is counted as skipped rather than
+guessed at.
+
+---
+
+## The document model
+
+MongoDB, not DynamoDB. DynamoDB is the stated preference and I would reach for it
+with more time, but a store I could bring up, load and explain in the time
+available was worth more than a partial DynamoDB integration. The interface is
+`DocumentStore`, so the choice is swappable.
+
+Two collections.
+
+**`transactions`** — `_id` is the transaction identity, so writes are upserts and
+both ingest and backfill are idempotent by construction.
+
+```json
+{
+  "_id": "4821|2026-07-04T14:54:00Z|DEBIT|2499.50",
+  "account": "4821",
+  "ym": "2026-07",
+  "at": ISODate("2026-07-04T14:54:00Z"),
+  "at_iso": "2026-07-04T20:24+05:30",
+  "dir": "DEBIT",
+  "amount": "2499.50",
+  "paise": 249950,
+  "cat": "SPEND",
+  "merchant": "AMAZON PAY",
+  "msgs": ["m-00087-1a2b3c", "m-00089-77de01"]
+}
+```
+
+`ym` is denormalised so Q1 is an equality match rather than a range over dates,
+which keeps the compound index a single contiguous span and lets the index supply
+the sort. Money is held twice: as an exact decimal string for fidelity, and as
+`paise` (a long) so totals can be summed and incremented without floating point.
+
+**`account_totals`** — one document per account, maintained on write:
+
+```json
+{ "_id": "4821", "paise_SPEND_DEBIT": 7956838, "count_SPEND_DEBIT": 93, ... }
+```
+
+Indexes: `{account, ym, at desc}` for Q1, and a multikey index on `msgs` for Q3.
+
+### Examined vs returned, at 100,000 transactions
+
+`./gradlew docstore --args="bench 100000"`
+
+| Query | Examined | Returned |
+|---|---|---|
+| Q1 one account's month, newest first | 2,125 | 2,125 |
+| Q2 running totals per category for an account | 1 | 1 |
+| Q3 message id to transaction | 1 | 1 |
+
+Every query examines exactly what it returns. Q1's 2,125 is the true size of that
+account-month; the index walks that span in sort order with no in-memory sort.
+
+Q2 is the interesting one. Aggregating over an account's history would examine
+around 33,000 documents. It examines 1 because totals are maintained on write in
+their own document. That is a deliberate trade: a more expensive write, including
+reversing the previous contribution when a transaction is re-saved so re-running
+cannot double a total, in exchange for a constant-time read. A ledger is read far
+more often than it is written.
+
+---
+
+## Backfill
+
+`read 271 SQL rows, wrote 266 transactions, collapsed 5 duplicate rows`
+
+Re-runnable by construction. Every write is an upsert keyed on content, so a
+second run over rows already moved is a no-op. Nothing tracks progress because
+nothing needs to, which is also what makes it safe after a partial failure.
+Verified by running it twice and checking after each.
+
+The legacy rows are not merely duplicated, they are duplicated *inconsistently*:
+the same transaction appears under different message ids. The first version of
+the backfill skipped those as duplicates and silently lost that evidence. See
+`AI-NOTES.md` — the consistency checker caught it.
+
+## Consistency checker
+
+Compares every transaction field by field — category, amount, direction,
+occurred_at, merchant, and the full set of source message ids — and separately
+resolves every message id back through Q3 to confirm it points at the right
+transaction. It reports three kinds of divergence: missing from documents,
+present in documents but not SQL, and present in both but differing, naming the
+field and both values.
+
+A count comparison would pass on an edited amount, an edited category, or a
+dropped message id. Mine reported exactly those when my own backfill was wrong.
+
+Known limitation, stated rather than hidden: the checker enumerates
+account-months from the SQL side, so a document in a month SQL has never seen
+would not be found. It is written against the same three queries the service has
+rather than assuming a privileged full scan.
+
+---
+
+See `DECISIONS.md` for the decision log, `AI-NOTES.md` for the AI disclosure,
+`UNFINISHED.md` for what is not done, and
+`incident/INC-2026-09-11-resolution.md` for the incident note.
