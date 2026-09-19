@@ -1,0 +1,5 @@
+What broke. Amounts.first required two decimal places, so when a bank wrote an amount without paise ("Rs.5") the regex skipped it and matched the next figure with decimals — the Avl Bal later in the same message.
+How I found it. Reproduced from the alert in app.log, then pinned it with a failing test on the exact water-can message before changing any code.
+Who was affected. 38 messages in corpus-a — every message whose amount lacks paise and which quotes a balance. Both banks, all formats. In each case the amount recorded was exactly the stated balance.
+Why the tests stayed green. Every amount in AmountsTest carried paise. The gap was in the test data, not the test code.
+Why it cannot recur. The regex now makes the paise group optional, and a test pins the no-paise format. EmailParser captures its amount inside its own pattern rather than scanning the body, which is the direction the SMS parsers should follow too.
