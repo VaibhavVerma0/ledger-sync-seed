@@ -23,28 +23,41 @@ public final class Reports {
 
     private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2);
 
-    public static Map<String, Object> summary(List<NormalizedTxn> ledger) {
+        public static Map<String, Object> summary(List<NormalizedTxn> ledger) {
         Map<String, Object> accounts = new LinkedHashMap<>();
         for (String acct : new TreeSet<>(ledger.stream()
                 .map(NormalizedTxn::accountLast4).toList())) {
 
             BigDecimal spend = ZERO;
             BigDecimal income = ZERO;
+            BigDecimal microTotal = ZERO;
+            BigDecimal outbound = ZERO;
+            BigDecimal inbound = ZERO;
+            int microCount = 0;
+
             for (NormalizedTxn t : ledger) {
                 if (!t.accountLast4().equals(acct)) continue;
-                if (t.direction() == Direction.DEBIT) spend = spend.add(t.amount());
-                else income = income.add(t.amount());
+                switch (t.category()) {
+                    case SPEND -> spend = spend.add(t.amount());
+                    case INCOME -> income = income.add(t.amount());
+                    case MICRO -> {
+                        microTotal = microTotal.add(t.amount());
+                        microCount++;
+                    }
+                    case TRANSFER -> {
+                        if (t.direction() == Direction.DEBIT) outbound = outbound.add(t.amount());
+                        else inbound = inbound.add(t.amount());
+                    }
+                }
             }
 
             Map<String, Object> a = new LinkedHashMap<>();
             a.put("spend", spend.toPlainString());
             a.put("income", income.toPlainString());
-            // TODO micro spends are still counted inside spend, and are not rolled up
-            a.put("micro_count", 0);
-            a.put("micro_total", ZERO.toPlainString());
-            // TODO transfers are still counted as spend and income
-            a.put("transferred_out", ZERO.toPlainString());
-            a.put("transferred_in", ZERO.toPlainString());
+            a.put("micro_count", microCount);
+            a.put("micro_total", microTotal.toPlainString());
+            a.put("transferred_out", outbound.toPlainString());
+            a.put("transferred_in", inbound.toPlainString());
             accounts.put(acct, a);
         }
         Map<String, Object> doc = new LinkedHashMap<>();
@@ -67,10 +80,6 @@ public final class Reports {
         Map<String, Object> doc = new LinkedHashMap<>();
         doc.put("transactions", rows);
         return doc;
-    }
-
-    public static Map<String, Object> reconciliation(List<NormalizedTxn> ledger) {
-        throw new UnsupportedOperationException("reconciliation is not implemented");
     }
 
     public static Map<Category, BigDecimal> byCategory(List<NormalizedTxn> ledger) {

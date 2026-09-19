@@ -42,6 +42,10 @@ public final class SqlLedgerStore implements LedgerStore, AutoCloseable {
 
     /** Applies every db/migration/V*.sql in filename order. */
     public void migrate(Path migrationDir) {
+        migrate(migrationDir, name -> true);
+    }
+
+    public void migrate(Path migrationDir, java.util.function.Predicate<String> include) {
         try (Statement st = conn.createStatement()) {
             st.execute("CREATE TABLE IF NOT EXISTS schema_history ("
                     + "  filename VARCHAR(200) PRIMARY KEY,"
@@ -53,6 +57,7 @@ public final class SqlLedgerStore implements LedgerStore, AutoCloseable {
             }
             for (Path f : files) {
                 String name = f.getFileName().toString();
+                if (!include.test(name)) continue;
                 try (PreparedStatement q = conn.prepareStatement(
                         "SELECT 1 FROM schema_history WHERE filename = ?")) {
                     q.setString(1, name);

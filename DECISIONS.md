@@ -1,0 +1,3 @@
+TRANSFER is decided by pairing, not by text. A transfer is only visible as two legs: a debit on one tracked account and a matching credit on another within ~10 minutes. The corpus punishes keyword matching — a ₹12,000 IMPS/P2A/RAHUL SHARMA debit has no counter-leg and is spending; an ₹18,000 NEFT INWARD SELF credit has no counter-leg and is income. Categorisation therefore runs over the full set after ingest, not per transaction.
+
+MICRO matches the UPI token, not a UPI/ prefix. A ₹0.50 debit labelled UPI MANDATE VERIFY is micro; matching on UPI/ would miss it and give 44 instead of 45 on account 9075.

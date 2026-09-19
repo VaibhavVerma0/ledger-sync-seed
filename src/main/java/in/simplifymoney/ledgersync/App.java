@@ -3,6 +3,7 @@ package in.simplifymoney.ledgersync;
 import in.simplifymoney.ledgersync.ingest.IngestService;
 import in.simplifymoney.ledgersync.json.Json;
 import in.simplifymoney.ledgersync.parse.Parsers;
+import in.simplifymoney.ledgersync.report.Reconciliation;
 import in.simplifymoney.ledgersync.report.Reports;
 import in.simplifymoney.ledgersync.store.SqlLedgerStore;
 import java.nio.file.Files;
@@ -29,15 +30,16 @@ public final class App {
 
         switch (args[0]) {
             case "migrate" -> {
+                boolean legacy = args.length > 1 && "legacy".equals(args[1]);
                 try (SqlLedgerStore store = new SqlLedgerStore(DB)) {
-                    store.migrate(MIGRATIONS);
+                    store.migrate(MIGRATIONS, n -> legacy || !n.startsWith("V2"));
                     System.out.println("ledger rows: " + store.count());
                 }
             }
             case "ingest" -> {
                 if (args.length < 2) throw new IllegalArgumentException("ingest needs a corpus");
                 try (SqlLedgerStore store = new SqlLedgerStore(DB)) {
-                    store.migrate(MIGRATIONS);
+                    store.migrate(MIGRATIONS, n -> !n.startsWith("V2"));
                     var stats = new IngestService(new Parsers(), store)
                             .ingestFile(Path.of(args[1]));
                     System.out.println(stats);
@@ -47,6 +49,7 @@ public final class App {
             case "report" -> {
                 if (args.length < 2) throw new IllegalArgumentException("report needs a directory");
                 Path out = Path.of(args[1]);
+                Path corpus = Path.of(args.length > 2 ? args[2] : "fixtures/corpus-a.jsonl");
                 Files.createDirectories(out);
                 try (SqlLedgerStore store = new SqlLedgerStore(DB)) {
                     var ledger = store.all();
@@ -55,7 +58,8 @@ public final class App {
                     Files.writeString(out.resolve("summary.json"),
                             Json.writePretty(Reports.summary(ledger)));
                     Files.writeString(out.resolve("reconciliation.json"),
-                            Json.writePretty(Reports.reconciliation(ledger)));
+                            Json.writePretty(Reconciliation.document(
+                                    ledger, IngestService.readCorpus(corpus))));
                     System.out.println("wrote 3 files to " + out);
                 }
             }
