@@ -35,3 +35,27 @@ tasks.register('selfCheck', JavaExec) {
     mainClass = 'in.simplifymoney.ledgersync.SelfCheck'
     classpath = sourceSets.main.runtimeClasspath
 }
+// The main source set stays JDK-only so verify.sh, which compiles it with plain
+// javac and no classpath, keeps working. The Mongo driver lives here instead.
+sourceSets {
+    docstore {
+        java.srcDir 'src/docstore/java'
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+}
+
+dependencies {
+    docstoreImplementation 'org.mongodb:mongodb-driver-sync:5.1.4'
+    docstoreRuntimeOnly 'com.h2database:h2:2.2.224'
+}
+
+// Entry point for everything that touches the document store:
+//   ./gradlew docstore --args="backfill"
+//   ./gradlew docstore --args="check"
+//   ./gradlew docstore --args="bench 100000"
+tasks.register('docstore', JavaExec) {
+    group = 'application'
+    mainClass = 'in.simplifymoney.ledgersync.docstore.DocStoreApp'
+    classpath = sourceSets.docstore.runtimeClasspath
+}
