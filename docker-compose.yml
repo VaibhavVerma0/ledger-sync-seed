@@ -1,0 +1,17 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: ledger-mongo
+    ports:
+      - "27017:27017"
+    command: ["--quiet", "--logpath", "/dev/null"]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - mongo-data:/data/db
+
+volumes:
+  mongo-data:
