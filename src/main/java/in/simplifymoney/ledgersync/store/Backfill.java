@@ -1,9 +1,11 @@
 package in.simplifymoney.ledgersync.store;
 
 import in.simplifymoney.ledgersync.model.NormalizedTxn;
-import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * Moves everything already in SQL into the document store.
@@ -28,22 +30,39 @@ public final class Backfill {
         this.target = target;
     }
 
-    public Result run() {
+        public Result run() {
         List<NormalizedTxn> rows = source.all();
-        Set<String> seen = new HashSet<>();
-        long written = 0;
-        long skipped = 0;
+        Map<String, NormalizedTxn> merged = new LinkedHashMap<>();
+        long collapsed = 0;
 
         for (NormalizedTxn t : rows) {
             String id = TxnId.of(t);
-            if (!seen.add(id)) {
-                skipped++;      // the same transaction again, from the duplicate SQL rows
-                continue;
+            NormalizedTxn existing = merged.get(id);
+            if (existing == null) {
+                merged.put(id, t);
+            } else {
+                merged.put(id, withEvidenceOf(existing, t));
+                collapsed++;
             }
-            target.save(t);
-            written++;
         }
-        return new Result(rows.size(), written, skipped);
+
+        for (NormalizedTxn t : merged.values()) {
+            target.save(t);
+        }
+        return new Result(rows.size(), merged.size(), collapsed);
+    }
+
+    /**
+     * The duplicate SQL rows are not always identical: the same transaction was
+     * written twice under different message ids. Dropping the second row would
+     * lose that evidence, so the ids are unioned onto the transaction they both
+     * describe.
+     */
+    private static NormalizedTxn withEvidenceOf(NormalizedTxn a, NormalizedTxn b) {
+        Set<String> ids = new TreeSet<>(a.sourceMessageIds());
+        ids.addAll(b.sourceMessageIds());
+        return new NormalizedTxn(a.accountLast4(), a.occurredAt(), a.direction(),
+                a.amount(), a.category(), a.merchant(), List.copyOf(ids));
     }
 
     public record Result(long read, long written, long skipped) {}

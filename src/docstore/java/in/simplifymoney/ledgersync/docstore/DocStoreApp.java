@@ -47,8 +47,9 @@ public final class DocStoreApp {
         try (SqlLedgerStore sql = new SqlLedgerStore(DB);
              MongoDocumentStore docs = new MongoDocumentStore(URI, DATABASE)) {
             Backfill.Result r = new Backfill(sql, docs).run();
-            System.out.println("read " + r.read() + ", wrote " + r.written()
-                    + ", skipped " + r.skipped() + " (duplicate rows in SQL)");
+            System.out.println("read " + r.read() + " SQL rows, wrote " + r.written()
+                    + " transactions, collapsed " + r.skipped()
+                    + " duplicate rows (evidence merged, not dropped)");
         }
     }
 
