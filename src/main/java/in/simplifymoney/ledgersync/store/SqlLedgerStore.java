@@ -1,5 +1,6 @@
 package in.simplifymoney.ledgersync.store;
 
+import in.simplifymoney.ledgersync.store.TxnId;
 import in.simplifymoney.ledgersync.model.Category;
 import in.simplifymoney.ledgersync.model.Direction;
 import in.simplifymoney.ledgersync.model.NormalizedTxn;
@@ -81,22 +82,45 @@ public final class SqlLedgerStore implements LedgerStore, AutoCloseable {
         }
     }
 
-    @Override
+        @Override
     public void save(NormalizedTxn t) {
-        try (PreparedStatement ps = conn.prepareStatement(
-                "INSERT INTO ledger(account_last4, occurred_at, direction, amount,"
-                        + " category, merchant, source_message_ids)"
-                        + " VALUES (?,?,?,?,?,?,?)")) {
-            ps.setString(1, t.accountLast4());
-            ps.setString(2, t.occurredAt().toString());
-            ps.setString(3, t.direction().name());
-            ps.setBigDecimal(4, t.amount());
-            ps.setString(5, t.category().name());
-            ps.setString(6, t.merchant());
-            ps.setString(7, String.join(",", t.sourceMessageIds()));
-            ps.executeUpdate();
+        String txnId = TxnId.of(t);
+        try {
+            List<String> ids = new ArrayList<>(existingMessageIds(txnId));
+            for (String id : t.sourceMessageIds()) {
+                if (!ids.contains(id)) ids.add(id);
+            }
+            ids.sort(String::compareTo);
+
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "MERGE INTO ledger(txn_id, account_last4, occurred_at, direction,"
+                            + " amount, category, merchant, source_message_ids)"
+                            + " KEY(txn_id) VALUES (?,?,?,?,?,?,?,?)")) {
+                ps.setString(1, txnId);
+                ps.setString(2, t.accountLast4());
+                ps.setString(3, t.occurredAt().toString());
+                ps.setString(4, t.direction().name());
+                ps.setBigDecimal(5, t.amount());
+                ps.setString(6, t.category().name());
+                ps.setString(7, t.merchant());
+                ps.setString(8, String.join(",", ids));
+                ps.executeUpdate();
+            }
         } catch (SQLException e) {
             throw new IllegalStateException("could not save " + t, e);
+        }
+    }
+
+    /** Message ids already recorded against this transaction, so re-ingest unions rather than replaces. */
+    private List<String> existingMessageIds(String txnId) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT source_message_ids FROM ledger WHERE txn_id = ?")) {
+            ps.setString(1, txnId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) return List.of();
+                return Arrays.stream(rs.getString(1).split(","))
+                        .filter(s -> !s.isBlank()).toList();
+            }
         }
     }
 
